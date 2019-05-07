@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace ConsoleTables.Sample
 {
@@ -48,7 +49,7 @@ namespace ConsoleTables.Sample
             var noCount =
             new ConsoleTable(new ConsoleTableOptions
             {
-                Columns = new[] { "one", "two", "three" },
+                Columns = new List<Column>() { new Column("one"), new Column("two"), new Column("three") },
                 EnableCount = false
             });
 

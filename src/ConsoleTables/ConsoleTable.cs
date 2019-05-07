@@ -9,8 +9,8 @@ namespace ConsoleTables
 {
     public class ConsoleTable
     {
-        public IList<object> Columns { get; set; }
-        public IList<object[]> Rows { get; protected set; }
+        public IList<Column> Columns { get; set; }
+        public IList<Row> Rows { get; protected set; }
 
         public ConsoleTableOptions Options { get; protected set; }
         public Type[] ColumnTypes { get; private set; }
@@ -24,25 +24,34 @@ namespace ConsoleTables
         };
 
         public ConsoleTable(params string[] columns)
-            : this(new ConsoleTableOptions { Columns = new List<string>(columns) })
+            : this(new ConsoleTableOptions { Columns = columns.Select(c => new Column(c)) })
         {
         }
 
         public ConsoleTable(ConsoleTableOptions options)
         {
             Options = options ?? throw new ArgumentNullException("options");
-            Rows = new List<object[]>();
-            Columns = new List<object>(options.Columns);
+            Rows = new List<Row>();
+            Columns = new List<Column>(options.Columns);
         }
 
-        public ConsoleTable AddColumn(IEnumerable<string> names)
+        public ConsoleTable AddColumn(params string[] names)
         {
-            foreach (var name in names)
-                Columns.Add(name);
+            return AddColumn(null, null, names);
+        }
+
+        public ConsoleTable AddColumn(ConsoleColor? fg, ConsoleColor? bg, params string[] names)
+        {
+            (Columns as List<Column>).AddRange(names.Select(n => new Column(n, fg, bg)));
             return this;
         }
 
         public ConsoleTable AddRow(params object[] values)
+        {
+            return AddRow(null, null, values);
+        }
+
+        public ConsoleTable AddRow(ConsoleColor? fg, ConsoleColor? bg, params object[] values)
         {
             if (values == null)
                 throw new ArgumentNullException(nameof(values));
@@ -54,7 +63,7 @@ namespace ConsoleTables
                 throw new Exception(
                     $"The number columns in the row ({Columns.Count}) does not match the values ({values.Length}");
 
-            Rows.Add(values);
+            Rows.Add(new Row(values, fg, bg));
             return this;
         }
 
@@ -73,7 +82,7 @@ namespace ConsoleTables
 
             var columns = GetColumns<T>();
 
-            table.AddColumn(columns);
+            table.AddColumn(columns.ToArray());
 
             foreach (
                 var propertyValues
@@ -81,6 +90,96 @@ namespace ConsoleTables
             ) table.AddRow(propertyValues.ToArray());
 
             return table;
+        }
+
+        private void SetColors(ConsoleColor? fg, ConsoleColor? bg)
+        {
+            if (fg.HasValue)
+                Console.ForegroundColor = fg.Value;
+            if (bg.HasValue)
+                Console.BackgroundColor = bg.Value;
+        }
+
+        private void SetColors(Colorable colorable)
+        {
+            SetColors(colorable.ForegroundColor, colorable.BackgroundColor);
+        }
+
+        public void WriteTable()
+        {
+            var currentFg = Console.ForegroundColor;
+            var currentBg = Console.BackgroundColor;
+
+            // find the longest column by searching each row
+            var columnLengths = ColumnLengths();
+
+            // set right alinment if is a number
+            var columnAlignment = Enumerable.Range(0, Columns.Count)
+                .Select(GetNumberAlignment)
+                .ToList();
+
+            var format = Enumerable.Range(0, Columns.Count)
+                .Select(i => " | {" + i + "," + columnAlignment[i] + columnLengths[i] + "}")
+                .Aggregate((s, a) => s + a) + " |";
+
+            // find the longest formatted line
+            var maxRowLength = Math.Max(0, Rows.Any() ? Rows.Select(r => r.Values).Max(row => string.Format(format, row).Length) : 0);
+            var columnHeaders = string.Format(format, Columns.Select(c => c.Value).ToArray());
+
+            // longest line is greater of formatted columnHeader and longest row
+            var longestLine = Math.Max(maxRowLength, columnHeaders.Length);
+
+            // create the divider
+            var divider = " " + string.Join("", Enumerable.Repeat("-", longestLine - 1)) + " ";
+
+            Console.WriteLine(divider);
+
+            SetColors(currentFg, currentBg);
+            Console.Write(" | ");
+            for (int i = 0; i < Columns.Count(); i++)
+            {
+                var col = Columns[i];
+
+                if (!String.IsNullOrWhiteSpace(col.Value.ToString()))
+                    SetColors(col);
+                Console.Write(String.Format("{0," + columnAlignment[i] + columnLengths[i] + "}", col.Value));
+
+                SetColors(currentFg, currentBg);
+                Console.Write(" | ");
+            }
+            Console.Write(Environment.NewLine);
+
+            foreach (var row in Rows)
+            {
+                Console.WriteLine(divider);
+
+                SetColors(currentFg, currentBg);
+                Console.Write(" | ");
+
+                for(int i = 0; i < row.Values.Count(); i++)
+                {
+                    var value = row.Values[i];
+
+                    if (!String.IsNullOrWhiteSpace(value.ToString()))
+                    {
+                        SetColors(Columns[i]);
+                        SetColors(row);
+                    }
+                    Console.Write(String.Format("{0," + columnAlignment[i] + columnLengths[i] + "}", value));
+
+                    SetColors(currentFg, currentBg);
+                    Console.Write(" | ");
+                }
+                Console.Write(Environment.NewLine);
+            }
+
+            Console.WriteLine(divider);
+
+            if (Options.EnableCount)
+            {
+                Console.WriteLine("");
+                Console.WriteLine(" Count: {0}", Rows.Count);
+            }
         }
 
         public override string ToString()
@@ -101,14 +200,11 @@ namespace ConsoleTables
                 .Aggregate((s, a) => s + a) + " |";
 
             // find the longest formatted line
-            var maxRowLength = Math.Max(0, Rows.Any() ? Rows.Max(row => string.Format(format, row).Length) : 0);
-            var columnHeaders = string.Format(format, Columns.ToArray());
+            var maxRowLength = Math.Max(0, Rows.Any() ? Rows.Select(r => r.Values).Max(row => string.Format(format, row).Length) : 0);
+            var columnHeaders = string.Format(format, Columns.Select(c => c.Value).ToArray());
 
             // longest line is greater of formatted columnHeader and longest row
             var longestLine = Math.Max(maxRowLength, columnHeaders.Length);
-
-            // add each row
-            var results = Rows.Select(row => string.Format(format, row)).ToList();
 
             // create the divider
             var divider = " " + string.Join("", Enumerable.Repeat("-", longestLine - 1)) + " ";
@@ -116,10 +212,10 @@ namespace ConsoleTables
             builder.AppendLine(divider);
             builder.AppendLine(columnHeaders);
 
-            foreach (var row in results)
+            foreach (var row in Rows)
             {
                 builder.AppendLine(divider);
-                builder.AppendLine(row);
+                builder.AppendLine(string.Format(format, row.Values));
             }
 
             builder.AppendLine(divider);
@@ -149,10 +245,10 @@ namespace ConsoleTables
             var format = Format(columnLengths, delimiter);
 
             // find the longest formatted line
-            var columnHeaders = string.Format(format, Columns.ToArray());
+            var columnHeaders = string.Format(format, Columns.Select(c => c.Value).ToArray());
 
             // add each row
-            var results = Rows.Select(row => string.Format(format, row)).ToList();
+            var results = Rows.Select(row => string.Format(format, row.Values)).ToList();
 
             // create the divider
             var divider = Regex.Replace(columnHeaders, @"[^|]", "-");
@@ -180,10 +276,7 @@ namespace ConsoleTables
             var format = Format(columnLengths);
 
             // find the longest formatted line
-            var columnHeaders = string.Format(format, Columns.ToArray());
-
-            // add each row
-            var results = Rows.Select(row => string.Format(format, row)).ToList();
+            var columnHeaders = string.Format(format, Columns.Select(c => c.Value).ToArray());
 
             // create the divider
             var divider = Regex.Replace(columnHeaders, @"[^|]", "-");
@@ -192,10 +285,10 @@ namespace ConsoleTables
             builder.AppendLine(dividerPlus);
             builder.AppendLine(columnHeaders);
 
-            foreach (var row in results)
+            foreach (var row in Rows)
             {
                 builder.AppendLine(dividerPlus);
-                builder.AppendLine(row);
+                builder.AppendLine(string.Format(format, row.Values));
             }
             builder.AppendLine(dividerPlus);
 
@@ -228,8 +321,8 @@ namespace ConsoleTables
         private List<int> ColumnLengths()
         {
             var columnLengths = Columns
-                .Select((t, i) => Rows.Select(x => x[i])
-                    .Union(new[] { Columns[i] })
+                .Select((t, i) => Rows.Select(x => x.Values[i])
+                    .Union(new[] { Columns[i].Value })
                     .Where(x => x != null)
                     .Select(x => x.ToString().Length).Max())
                 .ToList();
@@ -241,7 +334,7 @@ namespace ConsoleTables
             switch (format)
             {
                 case ConsoleTables.Format.Default:
-                    Console.WriteLine(ToString());
+                    WriteTable();
                     break;
                 case ConsoleTables.Format.MarkDown:
                     Console.WriteLine(ToMarkDownString());
@@ -275,7 +368,7 @@ namespace ConsoleTables
 
     public class ConsoleTableOptions
     {
-        public IEnumerable<string> Columns { get; set; } = new List<string>();
+        public IEnumerable<Column> Columns { get; set; } = new List<Column>();
         public bool EnableCount { get; set; } = true;
 
         /// <summary>
